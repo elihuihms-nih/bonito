@@ -70,9 +70,19 @@ def main(args):
 
     basecall = load_symbol(args.model_directory, "basecall")
 
+    mm2_kwargs = {}
+    if args.mm2_k is not None:
+        mm2_kwargs["k"] = args.mm2_k
+    if args.mm2_w is not None:
+        mm2_kwargs["w"] = args.mm2_w
+    if args.mm2_min_cnt is not None:
+        mm2_kwargs["min_cnt"] = args.mm2_min_cnt
+    if args.mm2_kwargs is not None:
+        mm2_kwargs.update({k:int(v) for k,v in [kv.split("=") for kv in args.mm2_kwargs.split(",")]})
+
     if args.reference:
         sys.stderr.write("> loading reference\n")
-        aligner = Aligner(args.reference, preset=args.mm2_preset)
+        aligner = Aligner(args.reference, preset=args.mm2_preset, **mm2_kwargs)
         if not aligner:
             sys.stderr.write("> failed to load/build index\n")
             exit(1)
@@ -195,5 +205,9 @@ def argparser():
     parser.add_argument("--min-accuracy-save-ctc", default=0.99, type=float)
     parser.add_argument("--alignment-threads", default=8, type=int)
     parser.add_argument("--mm2-preset", default='lr:hq', type=str)
+    parser.add_argument("--mm2-k", default=None, type=int, min=1, max=32, help="k-mer size for minimap2 alignment")
+    parser.add_argument("--mm2-w", default=None, type=int, min=1, max=255, help="minimizer window size for minimap2 alignment")
+    parser.add_argument("--mm2-min-cnt", default=None, type=int, min=1, help="Minimum number of minimap2 seeds to trigger alignment")
+    parser.add_argument("--mm2-kwargs", default=None, type=str, help="Additional minimap2 kwargs as comma-separated key=value pairs")
     parser.add_argument('-v', '--verbose', action='count', default=0)
     return parser
