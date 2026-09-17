@@ -70,7 +70,7 @@ def main(args):
 
     basecall = load_symbol(args.model_directory, "basecall")
 
-    mm2_kwargs = {}
+    mm2_kwargs = {"fn_idx_in": args.reference, "preset": args.mm2_preset}
     if args.mm2_k is not None:
         mm2_kwargs["k"] = args.mm2_k
     if args.mm2_w is not None:
@@ -80,9 +80,12 @@ def main(args):
     if args.mm2_kwargs is not None:
         mm2_kwargs.update({k:int(v) for k,v in [kv.split("=") for kv in args.mm2_kwargs.split(",")]})
 
+    if args.verbose:
+        sys.stderr.write(f"> minimap2 args: {mm2_kwargs}\n")
+
     if args.reference:
         sys.stderr.write("> loading reference\n")
-        aligner = Aligner(args.reference, preset=args.mm2_preset, **mm2_kwargs)
+        aligner = Aligner(**mm2_kwargs)
         if not aligner:
             sys.stderr.write("> failed to load/build index\n")
             exit(1)
