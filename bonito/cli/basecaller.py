@@ -205,9 +205,9 @@ def argparser():
     parser.add_argument("--min-accuracy-save-ctc", default=0.99, type=float)
     parser.add_argument("--alignment-threads", default=8, type=int)
     parser.add_argument("--mm2-preset", default='lr:hq', type=str)
-    parser.add_argument("--mm2-k", default=None, type=int, min=1, max=32, help="k-mer size for minimap2 alignment")
-    parser.add_argument("--mm2-w", default=None, type=int, min=1, max=255, help="minimizer window size for minimap2 alignment")
-    parser.add_argument("--mm2-min-cnt", default=None, type=int, min=1, help="Minimum number of minimap2 seeds to trigger alignment")
+    parser.add_argument("--mm2-k", default=None, type=int, help="k-mer size for minimap2 alignment")
+    parser.add_argument("--mm2-w", default=None, type=int, help="minimizer window size for minimap2 alignment")
+    parser.add_argument("--mm2-min-cnt", default=None, type=int, help="Minimum number of minimap2 seeds to trigger alignment")
     parser.add_argument("--mm2-kwargs", default=None, type=str, help="Additional minimap2 kwargs as comma-separated key=value pairs")
     parser.add_argument('-v', '--verbose', action='count', default=0)
     return parser
