@@ -556,12 +556,14 @@ class CTCWriter(Thread):
             for read, ctc_data in self.iterator:
                 rejected = False
 
-                sys.stderr.write(f"Processing read {read.read_id}\n")
+                sys.stderr.write(f"Processing read {read.read_id}: ")
 
                 seq = ctc_data['sequence']
                 qstring = ctc_data['qstring']
                 mean_qscore = ctc_data.get('mean_qscore', mean_qscore_from_qstring(qstring))
                 mapping = ctc_data.get('mapping', False)
+
+                sys.stderr.write(f"seq: {seq} ")
 
                 self.log.append((read.read_id, len(read.signal)))
 
@@ -572,7 +574,11 @@ class CTCWriter(Thread):
                 if not rejected and reject_counter(mapping is None, 'no_mapping'):
                     rejected = True
 
+                if rejected:
+                    sys.stderr.write("(rejected) ")
+
                 if mapping:
+                    sys.stderr.write("(mapped)\n")
                     cov = (mapping.q_en - mapping.q_st) / len(seq)
                     acc = mapping.mlen / mapping.blen
                     refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
@@ -580,7 +586,7 @@ class CTCWriter(Thread):
                     cov = 0
                     acc = 0
                     refseq = ctc_data['sequence']
-                    sys.stdout.write(f"{ctc_data['sequence']}\n")
+                    sys.stderr.write(f"(no mapping): {refseq}\n")
 
                 if not rejected and reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
                     rejected = True
