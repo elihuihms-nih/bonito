@@ -562,22 +562,29 @@ class CTCWriter(Thread):
                 mapping = ctc_data.get('mapping', False)
 
                 self.log.append((read.read_id, len(read.signal)))
+
                 if reject_counter(mean_qscore < self.min_qscore, 'low_qscore'):
                     rejected = True
-                if reject_counter(len(seq)==0, 'zerolen_sequence'):
+                if not rejected and reject_counter(len(seq)==0, 'zerolen_sequence'):
                     rejected = True
-                if reject_counter(mapping is None, 'no_mapping'):
+                if not rejected and reject_counter(mapping is None, 'no_mapping'):
                     rejected = True
 
-                cov = (mapping.q_en - mapping.q_st) / len(seq)
-                acc = mapping.mlen / mapping.blen
-                refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
+                if mapping:
+                    cov = (mapping.q_en - mapping.q_st) / len(seq)
+                    acc = mapping.mlen / mapping.blen
+                    refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
+                else:
+                    cov = 0
+                    acc = 0
+                    refseq = ctc_data['sequence']
+                    sys.stdout.write(f"{ctc_data['sequence']}\n")
 
-                if reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
+                if not rejected and reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
                     rejected = True
-                if reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'):
+                if not rejected and reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'):
                     rejected = True
-                if reject_counter('N' in refseq, 'N_in_sequence'):
+                if not rejected and reject_counter('N' in refseq, 'N_in_sequence'):
                     rejected = True
 
                 if not rejected:
@@ -589,7 +596,7 @@ class CTCWriter(Thread):
                     )
                     summary.append(summary_row(read, len(seq), mean_qscore, alignment=mapping))
 
-                if mapping.strand == -1:
+                if mapping and mapping.strand == -1:
                     refseq = mappy.revcomp(refseq)
 
                 target = [int(x) for x in refseq.translate({65: '1', 67: '2', 71: '3', 84: '4'})]
