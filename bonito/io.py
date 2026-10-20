@@ -574,13 +574,14 @@ class CTCWriter(Thread):
                     cov = (mapping.q_en - mapping.q_st) / len(seq)
                     acc = mapping.mlen / mapping.blen
                     refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
+
+                    if reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
+                        reject_reason += 8
+                    if reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'):
+                        reject_reason += 16
                 else:
                     refseq = seq
 
-                if reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
-                    reject_reason += 8
-                if reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'):
-                    reject_reason += 16
                 if reject_counter('N' in refseq, 'N_in_sequence'):
                     reject_reason += 32
 
