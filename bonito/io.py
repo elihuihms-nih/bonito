@@ -574,19 +574,12 @@ class CTCWriter(Thread):
                 if not rejected and reject_counter(mapping is None, 'no_mapping'):
                     rejected = True
 
-                if rejected:
-                    sys.stderr.write("(rejected) ")
-
                 if mapping:
-                    sys.stderr.write("(mapped)\n")
                     cov = (mapping.q_en - mapping.q_st) / len(seq)
                     acc = mapping.mlen / mapping.blen
                     refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
                 else:
-                    cov = 0
-                    acc = 0
-                    refseq = ctc_data['sequence']
-                    sys.stderr.write(f"(no mapping): {refseq}\n")
+                    rejected = True
 
                 if not rejected and reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
                     rejected = True
@@ -606,18 +599,18 @@ class CTCWriter(Thread):
 
                 if mapping and mapping.strand == -1:
                     refseq = mappy.revcomp(refseq)
-
-                target = [int(x) for x in refseq.translate({65: '1', 67: '2', 71: '3', 84: '4'})]
                 
-                if not rejected:
+                if rejected:
+                    reject_targets.append(ctc_data['sequence'])
+                    reject_chunks.append(read.signal)
+                    reject_lengths.append(len(ctc_data['sequence']))
+                else:
+                    target = [int(x) for x in refseq.translate({65: '1', 67: '2', 71: '3', 84: '4'})]
+
                     # RNA basecall already reversed. Flip back to signal-oriented for training.
                     targets.append(target[::-1] if self.rna else target)
                     chunks.append(read.signal)
                     lengths.append(len(target))
-                else:
-                    reject_targets.append(target[::-1] if self.rna else target)
-                    reject_chunks.append(read.signal)
-                    reject_lengths.append(len(target))
 
         # Write accepted chunks as normal
         if len(chunks) == 0:
