@@ -622,7 +622,7 @@ class CTCWriter(Thread):
         # Write the emitted sequences and their corresponding signal chunks for rejected data
         if self.save_rejects and len(reject_chunks) > 0:
             sys.stderr.write(f"> writing {len(reject_chunks)} rejected ctc data chunks\n")
-            sequences_ = np.zeros((reject_chunks.shape[0], max(reject_lengths)), dtype=np.uint8)
+            sequences_ = np.zeros((len(reject_chunks), max(reject_lengths)), dtype=np.uint8)
             for idx, target in enumerate(reject_sequences):
                 sequences_[idx, :len(target)] = target
             np.save(os.path.join(output_directory, "reject_chunks.npy"), np.array(reject_chunks, dtype=np.float16))
@@ -650,6 +650,10 @@ class CTCWriter(Thread):
 
         summary = pd.read_csv(summary_file(), sep='\t')
         summary.iloc[indices].to_csv(summary_file(), sep='\t', index=False)
+
+        np.save(os.path.join(output_directory, "chunks.npy"), chunks)
+        np.save(os.path.join(output_directory, "references.npy"), targets_)
+        np.save(os.path.join(output_directory, "reference_lengths.npy"), lengths)
         
         sys.stderr.write(f"> written ctc training data to {output_directory}\n")
         sys.stderr.write("  - chunks.npy with shape (%s)\n" % ','.join(map(str, chunks.shape)))
