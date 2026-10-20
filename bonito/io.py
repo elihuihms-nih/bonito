@@ -517,7 +517,7 @@ class CTCWriter(Thread):
     def __init__(
             self, mode, iterator, aligner, fd=sys.stdout, min_coverage=0.90,
             min_accuracy=0.99, ref_fn=None, groups=None, group_key=None,
-            min_qscore=None, rna=False
+            min_qscore=None, rna=False, save_rejects=False
     ):
         super().__init__()
         self.fd = fd
@@ -530,6 +530,7 @@ class CTCWriter(Thread):
         self.min_accuracy = min_accuracy
         self.min_qscore = min_qscore
         self.rna = rna
+        self.save_rejects = save_rejects
         self.output = AlignmentFile(
             fd, 'w' if self.mode == 'wfq' else self.mode, add_sam_header=self.mode != 'wfq',
             reference_filename=ref_fn,
@@ -544,11 +545,17 @@ class CTCWriter(Thread):
 
         chunks = []
         targets = []
-        lengths = []            
+        lengths = []
+        
         reject_counter = RejectCounter()
+        reject_chunks = []
+        reject_targets = []
+        reject_lengths = []
         
         with CSVLogger(summary_file(), sep='\t') as summary:
-            for read, ctc_data in self.iterator:
+            accepted_indices = []
+            
+            for i, (read, ctc_data) in enumerate(self.iterator):
 
                 seq = ctc_data['sequence']
                 qstring = ctc_data['qstring']
@@ -585,14 +592,33 @@ class CTCWriter(Thread):
                 chunks.append(read.signal)
                 lengths.append(len(target))
 
+                accepted_indices.append(i)
+
+        # Collect and retain rejected chunks for analysis
+        for i, (read, ctc_data) in enumerate(self.iterator):
+            if i in accepted_indices:
+                continue
+
+            target = [int(x) for x in ctc_data.get('refseq', '').translate({65: '1', 67: '2', 71: '3', 84: '4'})]
+            reject_targets.append(target[::-1] if self.rna else target)
+            reject_chunks.append(read.signal)
+            reject_lengths.append(len(reject_targets[-1]))
+
+        if self.save_rejects and len(reject_chunks) > 0:
+            self._write_chunks(reject_chunks, reject_targets, reject_lengths, are_rejects=True)
+
+        # Write accepted chunks as normal
         if len(chunks) == 0:
             sys.stderr.write("> no suitable ctc data to write\n")
-
+        else:
             sys.stderr.write("> Chunks rejected from training data:\n")
             for condition_name, count in reject_counter.items():
                 sys.stderr.write(f" - {condition_name}: {count}\n")
 
-            return
+            self._write_chunks(chunks, targets, lengths, are_rejects=False)
+
+    def _write_chunks(self, chunks, targets, lengths, are_rejects):
+        fn_prefix = "reject_" if are_rejects else ""
 
         chunks = np.array(chunks, dtype=np.float16)
         targets_ = np.zeros((chunks.shape[0], max(lengths)), dtype=np.uint8)
@@ -608,17 +634,20 @@ class CTCWriter(Thread):
         summary.iloc[indices].to_csv(summary_file(), sep='\t', index=False)
 
         output_directory = '.' if sys.stdout.isatty() else dirname(realpath('/dev/fd/1'))
-        np.save(os.path.join(output_directory, "chunks.npy"), chunks)
-        np.save(os.path.join(output_directory, "references.npy"), targets_)
-        np.save(os.path.join(output_directory, "reference_lengths.npy"), lengths)
+        
+        np.save(os.path.join(output_directory, f"{fn_prefix}chunks.npy"), chunks)
+        np.save(os.path.join(output_directory, f"{fn_prefix}references.npy"), targets_)
+        np.save(os.path.join(output_directory, f"{fn_prefix}reference_lengths.npy"), lengths)
 
-        sys.stderr.write("> Chunks rejected from training data:\n")
-        for condition_name,count in reject_counter.items():
-            sys.stderr.write(f" - {condition_name}: {count}\n")
-        sys.stderr.write(f"> written ctc training data to {output_directory}\n")
-        sys.stderr.write("  - chunks.npy with shape (%s)\n" % ','.join(map(str, chunks.shape)))
-        sys.stderr.write("  - references.npy with shape (%s)\n" % ','.join(map(str, targets_.shape)))
-        sys.stderr.write("  - reference_lengths.npy shape (%s)\n" % ','.join(map(str, lengths.shape)))
+        # Keep log file format relatively consistent for tools that parse bonito's logs
+        if are_rejects:
+            sys.stderr.write(f"> Wrote rejected chunks to {output_directory}\n")
+        else:           
+            sys.stderr.write(f"> written ctc training data to {output_directory}\n")
+
+        sys.stderr.write(f"  - {fn_prefix}chunks.npy with shape (%s)\n" % ','.join(map(str, chunks.shape)))
+        sys.stderr.write(f"  - {fn_prefix}references.npy with shape (%s)\n" % ','.join(map(str, targets_.shape)))
+        sys.stderr.write(f"  - {fn_prefix}reference_lengths.npy shape (%s)\n" % ','.join(map(str, lengths.shape)))
 
     def stop(self):
         self.join()

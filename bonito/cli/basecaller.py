@@ -159,7 +159,10 @@ def main(args):
     if args.save_ctc:
         writer_kwargs['rna'] = args.rna
         writer_kwargs['min_accuracy'] = args.min_accuracy_save_ctc
-        
+
+    if args.save_rejects and isinstance(ResultsWriter, CTCWriter):
+        writer_kwargs['save_rejects'] = True
+
     writer = ResultsWriter(
         fmt.mode, tqdm(results, desc="> calling", unit=" reads", leave=False,
                        total=num_reads, smoothing=0, ascii=True, ncols=100,
@@ -212,5 +215,6 @@ def argparser():
     parser.add_argument("--mm2-w", default=None, type=int, help="minimizer window size for minimap2 alignment")
     parser.add_argument("--mm2-min-cnt", default=None, type=int, help="Minimum number of minimap2 seeds to trigger alignment")
     parser.add_argument("--mm2-kwargs", default=None, type=str, help="Additional minimap2 kwargs as comma-separated key=value pairs")
+    parser.add_argument("--save-rejects", action="store_true", default=False, help="Save rejected chunks for analysis")
     parser.add_argument('-v', '--verbose', action='count', default=0)
     return parser
