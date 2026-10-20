@@ -563,8 +563,6 @@ class CTCWriter(Thread):
                 mean_qscore = ctc_data.get('mean_qscore', mean_qscore_from_qstring(qstring))
                 mapping = ctc_data.get('mapping', False)
 
-                sys.stderr.write(f"seq: {seq} ")
-
                 self.log.append((read.read_id, len(read.signal)))
 
                 if reject_counter(mean_qscore < self.min_qscore, 'low_qscore'):
@@ -579,7 +577,7 @@ class CTCWriter(Thread):
                     acc = mapping.mlen / mapping.blen
                     refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
                 else:
-                    rejected = True
+                    refseq = seq
 
                 if not rejected and reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
                     rejected = True
@@ -599,18 +597,20 @@ class CTCWriter(Thread):
 
                 if mapping and mapping.strand == -1:
                     refseq = mappy.revcomp(refseq)
-                
-                if rejected:
-                    reject_targets.append(ctc_data['sequence'])
-                    reject_chunks.append(read.signal)
-                    reject_lengths.append(len(ctc_data['sequence']))
-                else:
-                    target = [int(x) for x in refseq.translate({65: '1', 67: '2', 71: '3', 84: '4'})]
 
-                    # RNA basecall already reversed. Flip back to signal-oriented for training.
-                    targets.append(target[::-1] if self.rna else target)
+                target = [int(x) for x in refseq.translate({78: '0', 65: '1', 67: '2', 71: '3', 84: '4'})]
+
+                # RNA basecall already reversed. Flip back to signal-oriented for training.
+                target = target[::-1] if self.rna else target
+
+                if not rejected:            
+                    targets.append(target)
                     chunks.append(read.signal)
                     lengths.append(len(target))
+                else:
+                    reject_targets.append(target)
+                    reject_chunks.append(read.signal)
+                    reject_lengths.append(len(target))
 
         # Write accepted chunks as normal
         if len(chunks) == 0:
