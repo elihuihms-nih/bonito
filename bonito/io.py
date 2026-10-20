@@ -556,6 +556,8 @@ class CTCWriter(Thread):
             for read, ctc_data in self.iterator:
                 rejected = False
 
+                sys.stderr.write(f"Processing read {read.read_id}\n")
+
                 seq = ctc_data['sequence']
                 qstring = ctc_data['qstring']
                 mean_qscore = ctc_data.get('mean_qscore', mean_qscore_from_qstring(qstring))
