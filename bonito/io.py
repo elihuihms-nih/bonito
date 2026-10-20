@@ -611,18 +611,19 @@ class CTCWriter(Thread):
                     reject_chunks.append(read.signal)
                     reject_lengths.append(len(target))
 
-        if self.save_rejects and len(reject_chunks) > 0:
-            self._write_chunks(reject_chunks, reject_targets, reject_lengths, are_rejects=True)
-
         # Write accepted chunks as normal
         if len(chunks) == 0:
             sys.stderr.write("> no suitable ctc data to write\n")
         else:
-            sys.stderr.write("> Chunks rejected from training data:\n")
-            for condition_name, count in reject_counter.items():
-                sys.stderr.write(f" - {condition_name}: {count}\n")
-
             self._write_chunks(chunks, targets, lengths, are_rejects=False)
+
+        if self.save_rejects and len(reject_chunks) > 0:
+            sys.stderr.write(f"> writing {len(reject_chunks)} rejected ctc data chunks\n")
+            self._write_chunks(reject_chunks, reject_targets, reject_lengths, are_rejects=True)
+
+        sys.stderr.write("> Chunks rejected from training data:\n")
+        for condition_name, count in reject_counter.items():
+            sys.stderr.write(f" - {condition_name}: {count}\n")
 
     def _write_chunks(self, chunks, targets, lengths, are_rejects):
         fn_prefix = "reject_" if are_rejects else ""
