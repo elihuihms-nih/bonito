@@ -621,8 +621,8 @@ class CTCWriter(Thread):
         if self.save_rejects and len(reject_chunks) > 0:
             sys.stderr.write(f"> writing {len(reject_chunks)} rejected ctc data chunks\n")
             np.save(os.path.join(output_directory, "reject_chunks.npy"), np.array(reject_chunks, dtype=np.float16))
-            np.save(os.path.join(output_directory, "reject_sequences.npy"), reject_sequences, dtype=np.uint8)
-            np.save(os.path.join(output_directory, "reject_reasons.npy"), reject_reasons, dtype=np.uint8)
+            np.save(os.path.join(output_directory, "reject_sequences.npy"), np.array(reject_sequences, dtype=np.uint8))
+            np.save(os.path.join(output_directory, "reject_reasons.npy"), np.array(reject_reasons, dtype=np.uint8))
             sys.stderr.write(f"> Wrote rejected chunk data to {output_directory}\n")
 
         sys.stderr.write("> Chunks rejected from training data:\n")
