@@ -551,6 +551,7 @@ class CTCWriter(Thread):
         reject_chunks = []
         reject_sequences = []
         reject_reasons = []
+        reject_lengths = []
         
         with CSVLogger(summary_file(), sep='\t') as summary:
             for read, ctc_data in self.iterator:
@@ -610,6 +611,7 @@ class CTCWriter(Thread):
                     reject_chunks.append(read.signal)
                     reject_sequences.append(target)
                     reject_reasons.append(reject_reason)
+                    reject_lengths.append(len(target))
 
         # Write accepted chunks as normal
         if len(chunks) == 0:
@@ -620,9 +622,13 @@ class CTCWriter(Thread):
         # Write the emitted sequences and their corresponding signal chunks for rejected data
         if self.save_rejects and len(reject_chunks) > 0:
             sys.stderr.write(f"> writing {len(reject_chunks)} rejected ctc data chunks\n")
+            sequences_ = np.zeros((reject_chunks.shape[0], max(reject_lengths)), dtype=np.uint8)
+            for idx, target in enumerate(reject_sequences):
+                sequences_[idx, :len(target)] = target
             np.save(os.path.join(output_directory, "reject_chunks.npy"), np.array(reject_chunks, dtype=np.float16))
-            np.save(os.path.join(output_directory, "reject_sequences.npy"), np.array(reject_sequences, dtype=np.uint8))
+            np.save(os.path.join(output_directory, "reject_sequences.npy"), np.array(sequences_, dtype=np.uint8))
             np.save(os.path.join(output_directory, "reject_reasons.npy"), np.array(reject_reasons, dtype=np.uint8))
+            np.save(os.path.join(output_directory, "reject_lengths.npy"), np.array(reject_lengths, dtype=np.uint16))
             sys.stderr.write(f"> Wrote rejected chunk data to {output_directory}\n")
 
         sys.stderr.write("> Chunks rejected from training data:\n")
