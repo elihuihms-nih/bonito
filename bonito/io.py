@@ -553,9 +553,8 @@ class CTCWriter(Thread):
         reject_lengths = []
         
         with CSVLogger(summary_file(), sep='\t') as summary:
-            accepted_indices = []
-            
-            for i, (read, ctc_data) in enumerate(self.iterator):
+            for read, ctc_data in self.iterator:
+                rejected = False
 
                 seq = ctc_data['sequence']
                 qstring = ctc_data['qstring']
@@ -563,46 +562,47 @@ class CTCWriter(Thread):
                 mapping = ctc_data.get('mapping', False)
 
                 self.log.append((read.read_id, len(read.signal)))
-                if reject_counter(mean_qscore < self.min_qscore, 'low_qscore'): continue
-                if reject_counter(len(seq)==0, 'zerolen_sequence'): continue
-                if reject_counter(mapping is None, 'no_mapping'): continue
+                if reject_counter(mean_qscore < self.min_qscore, 'low_qscore'):
+                    rejected = True
+                if reject_counter(len(seq)==0, 'zerolen_sequence'):
+                    rejected = True
+                if reject_counter(mapping is None, 'no_mapping'):
+                    rejected = True
 
                 cov = (mapping.q_en - mapping.q_st) / len(seq)
                 acc = mapping.mlen / mapping.blen
                 refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
 
-                if reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'): continue
-                if reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'): continue
-                if reject_counter('N' in refseq, 'N_in_sequence'): continue
+                if reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
+                    rejected = True
+                if reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'):
+                    rejected = True
+                if reject_counter('N' in refseq, 'N_in_sequence'):
+                    rejected = True
 
-                self.output.write(
-                    AlignedSegment.fromstring(
-                        sam_record(read.read_id, seq, qstring, mapping),
-                        self.output.header
+                if not rejected:
+                    self.output.write(
+                        AlignedSegment.fromstring(
+                            sam_record(read.read_id, seq, qstring, mapping),
+                            self.output.header
+                        )
                     )
-                )
-                summary.append(summary_row(read, len(seq), mean_qscore, alignment=mapping))
+                    summary.append(summary_row(read, len(seq), mean_qscore, alignment=mapping))
 
                 if mapping.strand == -1:
                     refseq = mappy.revcomp(refseq)
 
                 target = [int(x) for x in refseq.translate({65: '1', 67: '2', 71: '3', 84: '4'})]
-                # RNA basecall already reversed. Flip back to signal-oriented for training.
-                targets.append(target[::-1] if self.rna else target)
-                chunks.append(read.signal)
-                lengths.append(len(target))
-
-                accepted_indices.append(i)
-
-        # Collect and retain rejected chunks for analysis
-        for i, (read, ctc_data) in enumerate(self.iterator):
-            if i in accepted_indices:
-                continue
-
-            target = [int(x) for x in ctc_data.get('refseq', '').translate({65: '1', 67: '2', 71: '3', 84: '4'})]
-            reject_targets.append(target[::-1] if self.rna else target)
-            reject_chunks.append(read.signal)
-            reject_lengths.append(len(reject_targets[-1]))
+                
+                if not rejected:
+                    # RNA basecall already reversed. Flip back to signal-oriented for training.
+                    targets.append(target[::-1] if self.rna else target)
+                    chunks.append(read.signal)
+                    lengths.append(len(target))
+                else:
+                    reject_targets.append(target[::-1] if self.rna else target)
+                    reject_chunks.append(read.signal)
+                    reject_lengths.append(len(target))
 
         if self.save_rejects and len(reject_chunks) > 0:
             self._write_chunks(reject_chunks, reject_targets, reject_lengths, are_rejects=True)
