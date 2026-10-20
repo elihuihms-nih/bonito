@@ -587,6 +587,11 @@ class CTCWriter(Thread):
 
         if len(chunks) == 0:
             sys.stderr.write("> no suitable ctc data to write\n")
+
+            sys.stderr.write("> Chunks rejected from training data:\n")
+            for condition_name, count in reject_counter.items():
+                sys.stderr.write(f" - {condition_name}: {count}\n")
+
             return
 
         chunks = np.array(chunks, dtype=np.float16)
