@@ -160,7 +160,7 @@ def main(args):
         writer_kwargs['rna'] = args.rna
         writer_kwargs['min_accuracy'] = args.min_accuracy_save_ctc
 
-    if args.save_rejects and isinstance(ResultsWriter, CTCWriter):
+    if args.save_rejects and issubclass(ResultsWriter, CTCWriter):
         writer_kwargs['save_rejects'] = True
 
     writer = ResultsWriter(

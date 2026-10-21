@@ -549,12 +549,13 @@ class CTCWriter(Thread):
         
         reject_counter = RejectCounter()
         reject_chunks = []
-        reject_targets = []
+        reject_sequences = []
+        reject_reasons = []
         reject_lengths = []
         
         with CSVLogger(summary_file(), sep='\t') as summary:
             for read, ctc_data in self.iterator:
-                rejected = False
+                reject_reason = 0
 
                 seq = ctc_data['sequence']
                 qstring = ctc_data['qstring']
@@ -562,25 +563,30 @@ class CTCWriter(Thread):
                 mapping = ctc_data.get('mapping', False)
 
                 self.log.append((read.read_id, len(read.signal)))
+
                 if reject_counter(mean_qscore < self.min_qscore, 'low_qscore'):
-                    rejected = True
+                    reject_reason += 1
                 if reject_counter(len(seq)==0, 'zerolen_sequence'):
-                    rejected = True
+                    reject_reason += 2
                 if reject_counter(mapping is None, 'no_mapping'):
-                    rejected = True
+                    reject_reason += 4
 
-                cov = (mapping.q_en - mapping.q_st) / len(seq)
-                acc = mapping.mlen / mapping.blen
-                refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
+                if mapping:
+                    cov = (mapping.q_en - mapping.q_st) / len(seq)
+                    acc = mapping.mlen / mapping.blen
+                    refseq = self.aligner.seq(mapping.ctg, mapping.r_st, mapping.r_en)
 
-                if reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
-                    rejected = True
-                if reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'):
-                    rejected = True
+                    if reject_counter(acc < self.min_accuracy, f'low_accuracy{self.min_accuracy:.2f}'):
+                        reject_reason += 8
+                    if reject_counter(cov < self.min_coverage, f'low_coverage{self.min_coverage:.2f}'):
+                        reject_reason += 16
+                else:
+                    refseq = seq
+
                 if reject_counter('N' in refseq, 'N_in_sequence'):
-                    rejected = True
+                    reject_reason += 32
 
-                if not rejected:
+                if reject_reason == 0: # i.e not rejected
                     self.output.write(
                         AlignedSegment.fromstring(
                             sam_record(read.read_id, seq, qstring, mapping),
@@ -589,36 +595,51 @@ class CTCWriter(Thread):
                     )
                     summary.append(summary_row(read, len(seq), mean_qscore, alignment=mapping))
 
-                if mapping.strand == -1:
+                if mapping and mapping.strand == -1:
                     refseq = mappy.revcomp(refseq)
 
-                target = [int(x) for x in refseq.translate({65: '1', 67: '2', 71: '3', 84: '4'})]
-                
-                if not rejected:
-                    # RNA basecall already reversed. Flip back to signal-oriented for training.
-                    targets.append(target[::-1] if self.rna else target)
+                target = [int(x) for x in refseq.translate({78: '0', 65: '1', 67: '2', 71: '3', 84: '4'})]
+
+                # RNA basecall already reversed. Flip back to signal-oriented for training.
+                target = target[::-1] if self.rna else target
+
+                if reject_reason == 0:            
+                    targets.append(target)
                     chunks.append(read.signal)
                     lengths.append(len(target))
                 else:
-                    reject_targets.append(target[::-1] if self.rna else target)
                     reject_chunks.append(read.signal)
+                    reject_sequences.append(target)
+                    reject_reasons.append(reject_reason)
                     reject_lengths.append(len(target))
-
-        if self.save_rejects and len(reject_chunks) > 0:
-            self._write_chunks(reject_chunks, reject_targets, reject_lengths, are_rejects=True)
 
         # Write accepted chunks as normal
         if len(chunks) == 0:
             sys.stderr.write("> no suitable ctc data to write\n")
-        else:
-            sys.stderr.write("> Chunks rejected from training data:\n")
-            for condition_name, count in reject_counter.items():
-                sys.stderr.write(f" - {condition_name}: {count}\n")
 
-            self._write_chunks(chunks, targets, lengths, are_rejects=False)
+        output_directory = '.' if sys.stdout.isatty() else dirname(realpath('/dev/fd/1'))
 
-    def _write_chunks(self, chunks, targets, lengths, are_rejects):
-        fn_prefix = "reject_" if are_rejects else ""
+        # Write the emitted sequences and their corresponding signal chunks for rejected data
+        if self.save_rejects and len(reject_chunks) > 0:
+            sys.stderr.write(f"> writing {len(reject_chunks)} rejected ctc data chunks\n")
+            
+            sequences_ = np.zeros((len(reject_chunks), max(reject_lengths)), dtype=np.uint8)
+            for idx, target in enumerate(reject_sequences):
+                sequences_[idx, :len(target)] = target
+            
+            np.save(os.path.join(output_directory, "reject_chunks.npy"), np.array(reject_chunks, dtype=np.float16))
+            np.save(os.path.join(output_directory, "reject_sequences.npy"), np.array(sequences_, dtype=np.uint8))
+            np.save(os.path.join(output_directory, "reject_reasons.npy"), np.array(reject_reasons, dtype=np.uint8))
+            np.save(os.path.join(output_directory, "reject_lengths.npy"), np.array(reject_lengths, dtype=np.uint16))
+
+            sys.stderr.write(f"> Wrote rejected chunk data to {output_directory}\n")
+
+        sys.stderr.write("> Chunks rejected from training data:\n")
+        for condition_name, count in reject_counter.items():
+            sys.stderr.write(f" - {condition_name}: {count}\n")
+
+        if len(chunks) == 0:
+            return
 
         chunks = np.array(chunks, dtype=np.float16)
         targets_ = np.zeros((chunks.shape[0], max(lengths)), dtype=np.uint8)
@@ -633,21 +654,14 @@ class CTCWriter(Thread):
         summary = pd.read_csv(summary_file(), sep='\t')
         summary.iloc[indices].to_csv(summary_file(), sep='\t', index=False)
 
-        output_directory = '.' if sys.stdout.isatty() else dirname(realpath('/dev/fd/1'))
+        np.save(os.path.join(output_directory, "chunks.npy"), chunks)
+        np.save(os.path.join(output_directory, "references.npy"), targets_)
+        np.save(os.path.join(output_directory, "reference_lengths.npy"), lengths)
         
-        np.save(os.path.join(output_directory, f"{fn_prefix}chunks.npy"), chunks)
-        np.save(os.path.join(output_directory, f"{fn_prefix}references.npy"), targets_)
-        np.save(os.path.join(output_directory, f"{fn_prefix}reference_lengths.npy"), lengths)
-
-        # Keep log file format relatively consistent for tools that parse bonito's logs
-        if are_rejects:
-            sys.stderr.write(f"> Wrote rejected chunks to {output_directory}\n")
-        else:           
-            sys.stderr.write(f"> written ctc training data to {output_directory}\n")
-
-        sys.stderr.write(f"  - {fn_prefix}chunks.npy with shape (%s)\n" % ','.join(map(str, chunks.shape)))
-        sys.stderr.write(f"  - {fn_prefix}references.npy with shape (%s)\n" % ','.join(map(str, targets_.shape)))
-        sys.stderr.write(f"  - {fn_prefix}reference_lengths.npy shape (%s)\n" % ','.join(map(str, lengths.shape)))
+        sys.stderr.write(f"> written ctc training data to {output_directory}\n")
+        sys.stderr.write("  - chunks.npy with shape (%s)\n" % ','.join(map(str, chunks.shape)))
+        sys.stderr.write("  - references.npy with shape (%s)\n" % ','.join(map(str, targets_.shape)))
+        sys.stderr.write("  - reference_lengths.npy shape (%s)\n" % ','.join(map(str, lengths.shape)))
 
     def stop(self):
         self.join()
