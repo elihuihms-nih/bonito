@@ -136,7 +136,7 @@ def argparser():
     parser.add_argument("-f", "--force", action="store_true", default=False)
     parser.add_argument("--restore-optim", action="store_true", default=False)
     parser.add_argument("--nondeterministic", action="store_true", default=False)
-    parser.add_argument("--save-weights-every", default=10, type=int)
+    parser.add_argument("--save-weights-every", default=0, type=int, metavar="N", help="Save weights every N training steps, set to zero to disable.")
     parser.add_argument("--save-optim-every", default=10, type=int)
     parser.add_argument("--grad-accum-split", default=1, type=int)
     parser.add_argument("--no-compile", action="store_true", default=False)

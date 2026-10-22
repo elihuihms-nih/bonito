@@ -85,7 +85,7 @@ class Trainer:
     def __init__(
         self, model, device, train_loader, valid_loader, criterion=None,
         use_amp=True, lr_scheduler_fn=None, restore_optim=False,
-        save_weights_every=10, save_optim_every=10, grad_accum_split=1, quantile_grad_clip=False,
+        save_weights_every=None, save_optim_every=10, grad_accum_split=1, quantile_grad_clip=False,
         chunks_per_epoch=None, batch_size=None, fixed_grad_scale=None
     ):
         self.model = model.to(device)
@@ -162,7 +162,10 @@ class Trainer:
         smoothed_loss = None
 
         # Save weights during training at regular intervals
-        checkpoint_every = max(1, self.steps_per_epoch // self.save_weights_every)
+        if self.save_weights_every:
+            checkpoint_every = max(1, self.steps_per_epoch // self.save_weights_every)
+        else:
+            checkpoint_every = None
 
         with progress_bar:
 
@@ -170,7 +173,7 @@ class Trainer:
                 chunks += batch[0].shape[0]
                 losses, grad_norm, scale = self.train_one_step(batch)
 
-                if step % checkpoint_every == 0 and step < self.steps_per_epoch:
+                if checkpoint_every and step % checkpoint_every == 0:
                     checkpoint_dir = (
                         Path(workdir)
                         / "snapshots"
