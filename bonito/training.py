@@ -142,16 +142,31 @@ class Trainer:
 
         scale = self.scaler.get_scale()
         self.scaler.unscale_(self.optimizer)
-        grad_norm = self.clip_grad(self.model.parameters())
+
+        # Ensure that only trainable parameters are considered for gradient clipping
+        grad_norm = self.clip_grad(
+            param
+            for param in self.model.parameters()
+            if param.requires_grad
+        )
+
         self.scaler.step(self.optimizer)
         self.scaler.update(self.fixed_grad_scale)
 
         return losses, grad_norm, scale
+        
 
     def train_one_epoch(self, loss_log, lr_scheduler, workdir, epoch_num):
         t0 = perf_counter()
         chunks = 0
         self.model.train()
+
+        # Exclude layers that have all parameters non-trainable from contributing to BatchNorm statistics
+        for module in self.model.modules():
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                parameters = list(module.parameters(recurse=False))
+                if parameters and all(not param.requires_grad for param in parameters):
+                    module.eval()
 
         # total is in batches and desc represents the number of training chunks supplied
         progress_bar = tqdm(
@@ -252,6 +267,17 @@ class Trainer:
 
         print(f"[loading optim] - '{optim_cls.__name__}' with args: {optim_kwargs}")
         optim_kwargs["lr"] = lr
+
+        # Create a list of only the trainable parameters
+        parameters = [
+            param
+            for param in self.model.parameters()
+            if param.requires_grad
+        ]
+
+        if not parameters:
+            raise ValueError("No trainable parameters selected.")
+
         self.optimizer = optim_cls(self.model.parameters(), **optim_kwargs)
 
 

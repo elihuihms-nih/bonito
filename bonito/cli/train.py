@@ -9,6 +9,7 @@ from pathlib import Path
 from importlib import import_module
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 import random
+import re
 
 import toml
 import torch
@@ -19,12 +20,17 @@ from bonito.util import __models_dir__, default_config, load_model, load_symbol,
 
 
 def main(args):
+    listing_only = args.list_parameters or args.list_trainable
     workdir = os.path.expanduser(args.training_directory)
-    if os.path.exists(workdir) and not args.force:
-        print("[error] %s exists, use -f to force continue training." % workdir)
-        exit(1)
-    os.makedirs(workdir, exist_ok=True)
 
+    if not listing_only:
+        if os.path.exists(workdir) and not args.force:
+            raise SystemExit(
+                f"[error] {workdir} exists, use -f to force continue training."
+            )
+
+        os.makedirs(workdir, exist_ok=True)
+        
     args.seed = args.seed or random.randint(0, 2**32 - 1)
     init(args.seed, args.device, (not args.nondeterministic))
     device = torch.device(args.device)
@@ -52,6 +58,22 @@ def main(args):
         model = load_model(args.pretrained, device, half=False, compile=False)
     else:
         model = load_symbol(config, 'Model')(config)
+
+    if args.list_parameters:
+        for name, param in model.named_parameters():
+            print(f"{name}\t{tuple(param.shape)}")
+        return
+
+    # Mark trainable parameters based on freeze and train-only patterns
+    configure_trainable_parameters(
+        model,
+        freeze_patterns=args.freeze,
+        train_only_patterns=args.train_only,
+    )
+
+    if args.list_parameters or args.list_trainable:
+        list_parameters(model, trainable_only=args.list_trainable)
+        return
 
     if not args.no_compile:
         try:
@@ -145,5 +167,73 @@ def argparser():
     quantile_group.add_argument('--no-quantile-grad-clip', dest='quantile_grad_clip', action='store_false')
     quantile_group.set_defaults(quantile_grad_clip=True)
     parser.add_argument("--num-workers", default=4, type=int)
+    parser.add_argument("--freeze", metavar="REGEX", action="append", default=[], help="Model layers matching REGEX to freeze during training")
+    parser.add_argument("--train-only", metavar="REGEX", action="append", default=[], help="Model layers matching REGEX to optimize during training")
+    listing = parser.add_mutually_exclusive_group()
+    listing.add_argument("--list-trainable", action="store_true", help="List only trainable parameters, then exit.")
+    listing.add_argument("--list-parameters", action="store_true", help="List all parameters with their train/freeze status, then exit.")
     return parser
 
+def configure_trainable_parameters(model, freeze_patterns: list[str], train_only_patterns: list[str]) -> None:
+    """
+    Configure which parameters of the model are trainable based on freeze and train-only patterns.
+
+    Args:
+        model: The model whose parameters are to be configured.
+        freeze_patterns: List of regex patterns for parameters to freeze.
+        train_only_patterns: List of regex patterns for parameters to train exclusively.
+    """
+    freeze_regexes = [re.compile(pattern) for pattern in freeze_patterns]
+    train_regexes = [re.compile(pattern) for pattern in train_only_patterns]
+
+    total_params, trainable_params = 0, 0
+    for name, param in model.named_parameters():
+        total_params += param.numel()
+
+        # Default behavior: train everything.
+        trainable = True
+
+        # If --train-only was supplied, freeze everything that doesn't match at least one train-only expression.
+        if train_regexes:
+            trainable = any(regex.search(name) for regex in train_regexes)
+
+        # --freeze always wins.
+        if any(regex.search(name) for regex in freeze_regexes):
+            trainable = False
+
+        param.requires_grad = trainable
+
+        if trainable:
+            trainable_params += param.numel()
+
+    print(
+        f"[parameters] trainable={trainable_params:,} "
+        f"total={total_params:,} "
+        f"({100 * trainable_params / total_params:.2f}% trainable)"
+    )
+
+def list_parameters(model, trainable_only=False):
+    total = 0
+    trainable = 0
+
+    for name, parameter in model.named_parameters():
+        count = parameter.numel()
+        total += count
+
+        if parameter.requires_grad:
+            trainable += count
+        elif trainable_only:
+            continue
+
+        status = "train" if parameter.requires_grad else "freeze"
+        print(
+            f"[{status:6}] {name}  "
+            f"shape={tuple(parameter.shape)}  "
+            f"elements={count:,}"
+        )
+
+    fraction = trainable / total if total else 0
+    print(
+        f"[parameters] trainable={trainable:,} "
+        f"total={total:,} ({fraction:.2%} trainable)"
+    )
