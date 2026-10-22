@@ -99,6 +99,7 @@ def main(args):
         use_amp=not args.no_amp,
         lr_scheduler_fn=lr_scheduler_fn,
         restore_optim=args.restore_optim,
+        save_weights_every=args.save_weights_every,
         save_optim_every=args.save_optim_every,
         grad_accum_split=args.grad_accum_split,
         quantile_grad_clip=args.quantile_grad_clip,
@@ -135,6 +136,7 @@ def argparser():
     parser.add_argument("-f", "--force", action="store_true", default=False)
     parser.add_argument("--restore-optim", action="store_true", default=False)
     parser.add_argument("--nondeterministic", action="store_true", default=False)
+    parser.add_argument("--save-weights-every", default=10, type=int)
     parser.add_argument("--save-optim-every", default=10, type=int)
     parser.add_argument("--grad-accum-split", default=1, type=int)
     parser.add_argument("--no-compile", action="store_true", default=False)

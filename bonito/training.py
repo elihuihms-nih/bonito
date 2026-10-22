@@ -4,11 +4,10 @@ Bonito train
 
 import math
 import os
-import re
-from glob import glob
+import shutil
+
 from itertools import islice
 from time import perf_counter
-from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -86,7 +85,7 @@ class Trainer:
     def __init__(
         self, model, device, train_loader, valid_loader, criterion=None,
         use_amp=True, lr_scheduler_fn=None, restore_optim=False,
-        save_optim_every=10, grad_accum_split=1, quantile_grad_clip=False,
+        save_weights_every=10, save_optim_every=10, grad_accum_split=1, quantile_grad_clip=False,
         chunks_per_epoch=None, batch_size=None, fixed_grad_scale=None
     ):
         self.model = model.to(device)
@@ -97,6 +96,7 @@ class Trainer:
         self.use_amp = use_amp
         self.lr_scheduler_fn = lr_scheduler_fn or linear_warmup_cosine_decay()
         self.restore_optim = restore_optim
+        self.save_weights_every = save_weights_every
         self.save_optim_every = save_optim_every
         self.grad_accum_split = grad_accum_split
 
@@ -148,7 +148,7 @@ class Trainer:
 
         return losses, grad_norm, scale
 
-    def train_one_epoch(self, loss_log, lr_scheduler):
+    def train_one_epoch(self, loss_log, lr_scheduler, workdir, epoch_num):
         t0 = perf_counter()
         chunks = 0
         self.model.train()
@@ -161,11 +161,33 @@ class Trainer:
         )
         smoothed_loss = None
 
+        # Save weights during training at regular intervals
+        checkpoint_every = max(1, self.steps_per_epoch // self.save_weights_every)
+
         with progress_bar:
 
-            for batch in islice(self.train_loader, self.steps_per_epoch):
+            for step, batch in enumerate(islice(self.train_loader, self.steps_per_epoch), start=1):
                 chunks += batch[0].shape[0]
                 losses, grad_norm, scale = self.train_one_step(batch)
+
+                if step % checkpoint_every == 0 and step < self.steps_per_epoch:
+                    checkpoint_dir = (
+                        Path(workdir)
+                        / "snapshots"
+                        / f"epoch_{epoch_num}_step_{step:07d}"
+                    )
+                    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+                    model = self.model
+                    if hasattr(model, "module"):
+                        model = model.module
+                    model = getattr(model, "_orig_mod", model)
+
+                    torch.save(model.state_dict(), checkpoint_dir / "weights_1.tar")
+                    shutil.copy2(
+                        Path(workdir) / "config.toml",
+                        checkpoint_dir / "config.toml",
+                    )
 
                 smoothed_loss = losses['loss'] if smoothed_loss is None else (0.01 * losses['loss'] + 0.99 * smoothed_loss)
 
@@ -249,7 +271,7 @@ class Trainer:
         for epoch in range(1 + last_epoch, epochs + 1):
             try:
                 with bonito.io.CSVLogger(os.path.join(workdir, 'losses_{}.csv'.format(epoch))) as loss_log:
-                    train_loss, duration = self.train_one_epoch(loss_log, lr_scheduler)
+                    train_loss, duration = self.train_one_epoch(loss_log, lr_scheduler, workdir, epoch)
 
                 model_state = self.model.module.state_dict() if hasattr(self.model, 'module') else self.model.state_dict()
                 torch.save(model_state, os.path.join(workdir, "weights_%s.tar" % epoch))
