@@ -59,11 +59,6 @@ def main(args):
     else:
         model = load_symbol(config, 'Model')(config)
 
-    if args.list_parameters:
-        for name, param in model.named_parameters():
-            print(f"{name}\t{tuple(param.shape)}")
-        return
-
     # Mark trainable parameters based on freeze and train-only patterns
     configure_trainable_parameters(
         model,
