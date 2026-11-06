@@ -4,6 +4,8 @@ Bonito CTC-CRF Model.
 
 import torch
 import numpy as np
+import parasail
+import re
 
 import koi.lstm
 from koi.ctc import SequenceDist, Max, Log, semiring
@@ -11,6 +13,42 @@ from koi.ctc import logZ_cu, viterbi_alignments, logZ_cu_sparse, bwd_scores_cu_s
 
 from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, layers, to_dict, from_dict, register
 
+_EDIT_MATRIX = parasail.matrix_create("ACGT", 0, -1)
+
+
+def deletion_fraction(reference, prediction):
+    """Deleted reference bases divided by reference length."""
+    if not reference:
+        return 0.0
+
+    if not prediction:
+        return 1.0
+
+    # Global alignment with unit substitution, insertion, and deletion costs.
+    # Prediction is the query, so D denotes missing reference bases.
+    alignment = parasail.nw_trace_scan_32(
+        prediction,
+        reference,
+        1,
+        1,
+        _EDIT_MATRIX,
+    )
+
+    if alignment.saturated:
+        raise RuntimeError("Deletion alignment saturated.")
+
+    cigar = alignment.cigar.decode
+    if isinstance(cigar, bytes):
+        cigar = cigar.decode("ascii")
+
+    operations = re.findall(r"(\d+)([=XIDM])", cigar)
+    deleted = sum(
+        int(count)
+        for count, operation in operations
+        if operation == "D"
+    )
+
+    return deleted / len(reference)
 
 def get_stride(m, stride=1):
     if hasattr(m, "output_stride"):
@@ -221,8 +259,86 @@ class SeqdistModel(Module):
             res["target_projection"] = self.target_projection.tolist()[1:]
         return res
 
+class DeletionPenalizer(SeqdistModel):
+    """Model that additionally penalizes deletions in the predicted sequences during training by adjusting the loss based on deletion rates."""
 
-class Model(SeqdistModel):
+    def loss(
+            self,
+            scores,
+            targets,
+            target_lengths,
+            deletion_strength=5.0,
+            max_chunk_weight=2.0,
+            reduction="mean",
+            **kwargs,
+        ):
+            if deletion_strength < 0 or max_chunk_weight < 1:
+                raise ValueError(
+                    "Require deletion_strength >= 0 and max_chunk_weight >= 1."
+                )
+    
+            if self.target_projection is not None:
+                targets = self.target_projection[targets]
+    
+            scores = scores.to(torch.float32)
+    
+            chunk_losses = self.seqdist.ctc_loss(
+                scores,
+                targets,
+                target_lengths,
+                reduction="none",
+                **kwargs,
+            )
+    
+            # Explicitly requesting individual losses returns them unweighted.
+            if reduction in (None, "none"):
+                return chunk_losses
+    
+            if reduction != "mean":
+                raise ValueError(f"Unsupported reduction: {reduction!r}")
+    
+            # Keep validation loss unchanged.
+            # Setting deletion_strength=0 also restores ordinary training loss.
+            if not self.training or deletion_strength == 0:
+                return chunk_losses.mean()
+    
+            # Decoding/alignment determines weights, without building a gradient graph.
+            # The original chunk_losses retain their gradients.
+            with torch.no_grad():
+                predictions = self.decode_batch(scores.detach())
+    
+                target_rows = targets.detach().cpu().tolist()
+                lengths = target_lengths.detach().cpu().tolist()
+    
+                deletion_rates = []
+    
+                for prediction, row, length in zip(
+                    predictions, target_rows, lengths
+                ):
+                    reference = "".join(
+                        self.alphabet[base]
+                        for base in row[:length]
+                    )
+    
+                    # Match Bonito validation's exclusion of CRF context bases.
+                    start = self.n_pre_context_bases
+                    end = len(reference) - self.n_post_context_bases
+                    reference = reference[start:end]
+    
+                    deletion_rates.append(
+                        deletion_fraction(reference, prediction)
+                    )
+    
+                deletion_rates = chunk_losses.new_tensor(deletion_rates)
+    
+                weights = (
+                    1.0 + deletion_strength * deletion_rates
+                ).clamp(max=max_chunk_weight)
+    
+            return (chunk_losses * weights).sum() / weights.sum()
+
+
+class Model(DeletionPenalizer):
 
     def __init__(self, config):
         seqdist = CTC_CRF(
