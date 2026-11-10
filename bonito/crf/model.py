@@ -267,7 +267,7 @@ class DeletionPenalizer(SeqdistModel):
             scores,
             targets,
             target_lengths,
-            deletion_strength=5.0,
+            deletion_strength=0.0,
             max_chunk_weight=2.0,
             reduction="mean",
             **kwargs,
